@@ -1,0 +1,21 @@
+{
+  "name": "pi-monorepo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "tsc --build --clean",
+    "test": "npm run build && node --test packages/*/test/*.test.js experiments/context-meter/*.test.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "playwright-core": "^1.63.0",
+    "typescript": "^5.7.0"
+  }
+}

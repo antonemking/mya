@@ -1,0 +1,791 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mya · viz</title>
+<style>
+  :root {
+    --bg: #070b12;
+    --panel: #0d1320;
+    --panel-2: #101829;
+    --line: #1c2638;
+    --text: #e6ebf3;
+    --dim: #8b98ad;
+    --faint: #56637a;
+    --request: #22d3ee;
+    --stream: #fbbf24;
+    --call: #a78bfa;
+    --tool: #34d399;
+    --error: #f87171;
+    --refused: #fb923c;
+    --cache: #2dd4bf;
+    --fresh: #60a5fa;
+    --write: #c084fc;
+    --user: #60a5fa;
+    --assistant: #fbbf24;
+    --toolmsg: #34d399;
+    --system: #64748b;
+    --custom: #c084fc;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body {
+    display: grid; grid-template-rows: auto auto minmax(0, 1fr); height: 100vh; overflow: hidden;
+    background:
+      radial-gradient(1200px 600px at 75% -10%, rgba(34, 211, 238, 0.07), transparent 60%),
+      radial-gradient(900px 500px at 10% 110%, rgba(167, 139, 250, 0.06), transparent 60%),
+      var(--bg);
+  }
+  code, pre, .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+  .logo { font-weight: 700; letter-spacing: 0.02em; font-size: 15px; }
+  .logo span { color: var(--request); }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--dim); background: var(--panel); white-space: nowrap; font-size: 12px; }
+  .chip b { color: var(--text); font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+  .dot.live { background: var(--tool); box-shadow: 0 0 10px var(--tool); }
+  .dot.wait { background: var(--stream); }
+  .spacer { flex: 1; }
+  button, select { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 5px 11px; font: inherit; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--request); }
+  button:disabled { opacity: 0.4; cursor: default; }
+
+  #narration { display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--line); min-height: 54px; }
+  #step { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--bg); background: var(--request); padding: 3px 8px; border-radius: 6px; font-weight: 700; white-space: nowrap; transition: background 0.3s; }
+  #say { font-size: 15px; transition: opacity 0.25s; }
+  #say code { background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 4px; }
+
+  main { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(360px, 1fr); gap: 14px; padding: 14px; min-height: 0; }
+  .col { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+  .panel { background: linear-gradient(180deg, var(--panel), rgba(13,19,32,0.85)); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; min-height: 0; }
+  .panel h2 { margin: 0 0 8px; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .panel h2 .hint { text-transform: none; letter-spacing: 0; color: var(--faint); font-weight: 400; }
+
+  /* Stage */
+  #stagePanel { padding: 6px; }
+  svg#stage { width: 100%; height: auto; display: block; }
+  .zone { fill: rgba(255,255,255,0.012); stroke: var(--line); stroke-dasharray: 5 6; }
+  .zone-label { fill: var(--faint); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; }
+  .wire { fill: none; stroke: var(--line); stroke-width: 2; }
+  .wire.hot { stroke: rgba(34, 211, 238, 0.45); }
+  .wire.hot-res { stroke: rgba(251, 191, 36, 0.45); }
+  .wire-label { fill: var(--faint); font-size: 10.5px; text-anchor: middle; letter-spacing: 0.08em; }
+  .node circle.core { fill: var(--panel-2); stroke: #2a3750; stroke-width: 2; transition: stroke 0.25s, fill 0.25s; }
+  .node text.title { fill: var(--text); font-size: 14px; font-weight: 700; text-anchor: middle; }
+  .node text.sub { fill: var(--dim); font-size: 11px; text-anchor: middle; }
+  .node text.timer { fill: var(--stream); font-size: 12px; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+  #harness.busy circle.core { stroke: var(--request); }
+  #harness .loop { fill: none; stroke: var(--request); stroke-width: 2; stroke-dasharray: 6 10; opacity: 0; transform-box: fill-box; transform-origin: center; }
+  #harness.busy .loop { opacity: 0.8; animation: spin 3.2s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #model .ring { fill: none; stroke: var(--request); stroke-width: 2; opacity: 0; transform-box: fill-box; transform-origin: center; }
+  #model.thinking circle.core { stroke: var(--request); fill: #0f1d2c; }
+  #model.thinking .ring { animation: ring 1.8s ease-out infinite; }
+  #model.thinking .ring:nth-of-type(2) { animation-delay: 0.6s; }
+  #model.thinking .ring:nth-of-type(3) { animation-delay: 1.2s; }
+  @keyframes ring { 0% { opacity: 0.7; transform: scale(1); } 100% { opacity: 0; transform: scale(1.7); } }
+  #model.streaming circle.core { stroke: var(--stream); fill: #1c1708; filter: url(#glow); }
+  .tool-node circle.core { fill: var(--panel-2); stroke: #2a3750; stroke-width: 2; transition: stroke 0.2s, fill 0.2s; }
+  .tool-node text { fill: var(--dim); font-size: 11px; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+  .tool-node.active circle.core { stroke: var(--tool); fill: #0b2219; filter: url(#glow); }
+  .tool-node.active text { fill: var(--tool); }
+  .tool-node.fail circle.core { stroke: var(--error); }
+  .tool-node.refused circle.core { stroke: var(--refused); }
+  .tool-node.steered circle.core { stroke: var(--user); }
+  .tool-node.steered text { fill: var(--user); }
+  .tool-wire { stroke: var(--line); stroke-width: 1.5; fill: none; }
+  .tool-wire.hot { stroke: rgba(52, 211, 153, 0.5); }
+  .packet-label { font-size: 11px; fill: var(--text); paint-order: stroke; stroke: var(--bg); stroke-width: 4px; font-family: ui-monospace, Menlo, monospace; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; padding: 2px 10px 6px; color: var(--dim); font-size: 12px; }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+
+  /* Tape */
+  #tape { display: flex; height: 34px; border-radius: 8px; overflow: hidden; position: relative; background: rgba(255,255,255,0.02); border: 1px solid var(--line); }
+  #tape .blk { min-width: 5px; height: 100%; border-right: 1px solid var(--bg); cursor: pointer; opacity: 0.85; transition: opacity 0.2s, flex-grow 0.4s; position: relative; }
+  #tape .blk:hover { opacity: 1; outline: 1px solid #fff5; outline-offset: -1px; }
+  #tape .blk.new { animation: grow 0.6s ease-out; }
+  #tape .blk.steer { outline: 2px solid var(--user); outline-offset: -2px; opacity: 1; animation: grow 0.6s ease-out; }
+  @keyframes grow { from { opacity: 0; } to { opacity: 0.85; } }
+  #tapeCache { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: repeating-linear-gradient(135deg, rgba(45,212,191,0.28) 0 6px, rgba(45,212,191,0.12) 6px 12px); border-right: 2px solid var(--cache); pointer-events: none; transition: width 0.8s ease; }
+  .tape-meta { display: flex; justify-content: space-between; color: var(--dim); font-size: 12px; margin-top: 7px; gap: 10px; flex-wrap: wrap; }
+  .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin: 0 5px 0 10px; vertical-align: -1px; }
+
+  /* Turns */
+  #turns { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+  .turn { min-width: 220px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; animation: grow 0.4s ease-out; }
+  .turn.live { border-color: rgba(34, 211, 238, 0.5); }
+  .turn-h { display: flex; justify-content: space-between; align-items: center; font-weight: 600; margin-bottom: 7px; }
+  .stop { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); font-weight: 500; }
+  .stop.tool_use { color: var(--tool); border-color: rgba(52,211,153,0.4); }
+  .stop.end_turn { color: var(--request); border-color: rgba(34,211,238,0.4); }
+  .bar { display: flex; height: 9px; border-radius: 5px; overflow: hidden; background: rgba(255,255,255,0.04); margin: 4px 0; }
+  .bar span { height: 100%; transition: width 0.6s ease; }
+  .kv { color: var(--dim); font-size: 11.5px; margin-top: 3px; }
+  .kv b { color: var(--text); font-weight: 600; }
+
+  /* Right column */
+  #responsePanel { flex: 1.1; display: flex; flex-direction: column; }
+  #response { overflow-y: auto; flex: 1; padding-right: 4px; }
+  .rsec { margin-bottom: 14px; }
+  .rsec h3 { margin: 0 0 6px; font-size: 11px; color: var(--faint); letter-spacing: 0.12em; text-transform: uppercase; font-weight: 600; }
+  .rtext { white-space: pre-wrap; word-wrap: break-word; }
+  .rtext .cursor { display: inline-block; width: 7px; height: 14px; background: var(--stream); vertical-align: -2px; animation: blink 1s steps(2) infinite; margin-left: 1px; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .call { display: inline-flex; gap: 8px; align-items: baseline; margin: 5px 0; padding: 5px 9px; border: 1px solid rgba(167,139,250,0.35); background: rgba(167,139,250,0.08); border-radius: 8px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; max-width: 100%; overflow: hidden; }
+  .call .name { color: var(--call); font-weight: 700; }
+  .call .args { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .call .res { white-space: nowrap; }
+  .call.ok { border-color: rgba(52,211,153,0.35); background: rgba(52,211,153,0.07); }
+  .call.ok .res { color: var(--tool); }
+  .call.bad { border-color: rgba(248,113,113,0.4); background: rgba(248,113,113,0.07); }
+  .call.bad .res { color: var(--error); }
+  .call.steered { border-style: dashed; border-color: rgba(96,165,250,0.7); background: rgba(96,165,250,0.08); }
+  .call.steered .name { text-decoration: line-through; color: var(--user); }
+  .call.steered .res { color: var(--user); }
+  .call.refused { border-color: rgba(251,146,60,0.4); }
+  .call.refused .res { color: var(--refused); }
+
+  #eventsPanel { flex: 1; display: flex; flex-direction: column; }
+  #log { overflow-y: auto; flex: 1; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  .row { display: grid; grid-template-columns: 58px 150px minmax(0, 1fr); gap: 8px; padding: 3px 6px; border-radius: 6px; cursor: pointer; align-items: baseline; }
+  .row:hover, .row.sel { background: rgba(255,255,255,0.05); }
+  .row .t { color: var(--faint); text-align: right; }
+  .row .ty { font-weight: 600; }
+  .row .d { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row.flash { animation: flash 0.8s ease-out; }
+  @keyframes flash { from { background: rgba(34, 211, 238, 0.18); } to { background: transparent; } }
+  #detail { margin-top: 8px; max-height: 38%; overflow: auto; background: #060a11; border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; font-size: 11.5px; display: none; white-space: pre-wrap; word-break: break-word; }
+  #detail.open { display: block; }
+  .k { color: #7dd3fc; } .s { color: #bef264; } .n { color: #fda4af; } .b { color: #c4b5fd; }
+
+  .empty { color: var(--faint); font-style: italic; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; } ::-webkit-scrollbar-thumb { background: #1f2a3d; border-radius: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">mya<span> · viz</span></div>
+  <span class="chip"><span class="dot wait" id="conn"></span><span id="connText">connecting</span></span>
+  <span class="chip">model <b id="hModel">—</b></span>
+  <span class="chip">session <b id="hSession" class="mono">—</b></span>
+  <div class="spacer"></div>
+  <select id="speed" title="Replay speed"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option></select>
+  <button id="replay" disabled>↻ Replay run</button>
+</header>
+
+<div id="narration"><span id="step">waiting</span><span id="say">Waiting for mya. Send a prompt in the terminal and watch it travel.</span></div>
+
+<main>
+  <div class="col">
+    <div class="panel" id="stagePanel">
+      <svg id="stage" viewBox="0 0 1000 400" aria-label="Request flow">
+        <defs>
+          <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+            <feGaussianBlur stdDeviation="4" result="b"/>
+            <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+        <rect class="zone" x="16" y="16" width="424" height="370" rx="18"/>
+        <text class="zone-label" x="34" y="40">your machine</text>
+        <rect class="zone" x="585" y="16" width="399" height="370" rx="18"/>
+        <text class="zone-label" x="603" y="40" id="cloudLabel">the provider</text>
+        <text class="wire-label" x="512" y="196">HTTPS</text>
+        <text class="wire-label" x="512" y="212">only text crosses</text>
+
+        <path id="reqPath" class="wire" d="M 280 112 C 420 10, 650 30, 742 150"/>
+        <path id="resPath" class="wire" d="M 744 236 C 640 350, 450 320, 272 158"/>
+        <g id="toolWires"></g>
+
+        <g id="harness" class="node">
+          <circle class="loop" cx="230" cy="130" r="62"/>
+          <circle class="core" cx="230" cy="130" r="50"/>
+          <text class="title" x="230" y="127">mya</text>
+          <text class="sub" x="230" y="145" id="harnessSub">loop · idle</text>
+        </g>
+
+        <g id="model" class="node">
+          <circle class="ring" cx="795" cy="192" r="64"/>
+          <circle class="ring" cx="795" cy="192" r="64"/>
+          <circle class="ring" cx="795" cy="192" r="64"/>
+          <circle class="core" cx="795" cy="192" r="64"/>
+          <text class="title" x="795" y="188" id="modelTitle">model</text>
+          <text class="sub" x="795" y="206" id="modelSub">waiting</text>
+          <text class="timer" x="795" y="290" id="modelTimer"></text>
+        </g>
+
+        <g id="toolNodes"></g>
+        <g id="packets"></g>
+      </svg>
+      <div class="legend">
+        <span><i style="background:var(--request)"></i>request: the whole transcript</span>
+        <span><i style="background:var(--stream)"></i>answer tokens</span>
+        <span><i style="background:var(--call)"></i>tool-call tokens</span>
+        <span><i style="background:var(--tool)"></i>tool run, local</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>What the model reads this turn <span class="hint">click a block to inspect it</span></h2>
+      <div id="tape"><div id="tapeCache"></div></div>
+      <div class="tape-meta">
+        <span id="tapeStats" class="empty">No request yet.</span>
+        <span>
+          <span class="sw" style="background:var(--system)"></span>system + tools
+          <span class="sw" style="background:var(--user)"></span>user
+          <span class="sw" style="background:var(--assistant)"></span>assistant
+          <span class="sw" style="background:var(--toolmsg)"></span>tool result
+          <span class="sw" style="background:var(--cache)"></span>cache hit
+        </span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Turns <span class="hint">one model call plus the tools it asked for</span></h2>
+      <div id="turns"><span class="empty">No turns yet.</span></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="panel" id="responsePanel">
+      <h2>Coming back</h2>
+      <div id="response"><span class="empty">Streamed text and tool calls appear here.</span></div>
+    </div>
+    <div class="panel" id="eventsPanel">
+      <h2>Events <span class="hint">the raw stream every view subscribes to</span></h2>
+      <div id="log"></div>
+      <pre id="detail"></pre>
+    </div>
+  </div>
+</main>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const NS = "http://www.w3.org/2000/svg";
+const svg = (tag, attrs = {}) => { const el = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v); return el; };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const fmt = (n) => n >= 10000 ? (n / 1000).toFixed(1) + "k" : String(n);
+const bytes = (n) => n >= 1024 ? (n / 1024).toFixed(1) + " KB" : n + " B";
+const secs = (ms) => (ms / 1000).toFixed(ms < 10000 ? 2 : 1) + "s";
+const clip = (s, n) => (s.length > n ? s.slice(0, n) + "…" : s);
+
+// ---------------------------------------------------------------- state
+const S = {
+  pid: null, store: [], animate: false, replaying: false, runActive: false,
+  t0: null, clockOffset: 0, meta: {}, turns: new Map(), current: null,
+  toolNames: ["read", "write", "edit", "bash"], context: null, lastParticle: 0,
+  seenCalls: new Set(), logRows: [], lastDeltaRow: null,
+};
+const now = () => Date.now() - S.clockOffset;
+
+// ---------------------------------------------------------------- narration
+const STEP_COLORS = { request: "var(--request)", thinking: "var(--request)", streaming: "var(--stream)", "tool call": "var(--call)", tool: "var(--tool)", loop: "var(--tool)", steer: "var(--user)", done: "var(--cache)", refused: "var(--refused)", error: "var(--error)" };
+// Each line stays up long enough to notice; during a burst only the latest waiting line survives,
+// so the story never falls more than a beat behind what is happening.
+const NARRATION_MS = 800;
+const narration = { queue: [], busyUntil: 0, timer: null };
+function showNarration(step, html) {
+  const say = $("#say"), badge = $("#step");
+  badge.textContent = step; badge.style.background = STEP_COLORS[step] || "var(--request)";
+  say.style.opacity = 0;
+  setTimeout(() => { say.innerHTML = html; say.style.opacity = 1; }, 120);
+}
+function pumpNarration() {
+  narration.timer = null;
+  const wait = narration.busyUntil - performance.now();
+  if (wait > 0) { narration.timer = setTimeout(pumpNarration, wait); return; }
+  const next = narration.queue.shift();
+  if (!next) return;
+  showNarration(next.step, next.html);
+  narration.busyUntil = performance.now() + NARRATION_MS;
+  if (narration.queue.length) narration.timer = setTimeout(pumpNarration, NARRATION_MS);
+}
+function narrate(step, html) {
+  if (!S.animate) {
+    narration.queue = []; clearTimeout(narration.timer); narration.timer = null; narration.busyUntil = 0;
+    $("#step").textContent = step; $("#step").style.background = STEP_COLORS[step] || "var(--request)"; $("#say").innerHTML = html;
+    return;
+  }
+  narration.queue = [{ step, html }];
+  if (!narration.timer) pumpNarration();
+}
+
+// ---------------------------------------------------------------- stage
+const packets = $("#packets");
+// Requests and tool round-trips share one lane, so a burst of events plays in order.
+let laneFreeAt = 0;
+function travel(path, opts) {
+  if (!S.animate) { opts.onArrive && opts.onArrive(); return; }
+  if (!opts.lane) return fly(path, opts);
+  const start = Math.max(performance.now(), laneFreeAt);
+  laneFreeAt = start + (opts.dur ?? 900) + 60;
+  const delay = start - performance.now();
+  if (delay <= 1) fly(path, opts); else setTimeout(() => fly(path, opts), delay);
+}
+function fly(path, { color, r = 7, dur = 900, label, reverse = false, onStart, onArrive }) {
+  onStart && onStart();
+  const len = path.getTotalLength();
+  const g = svg("g");
+  const halo = svg("circle", { r: r * 2.2, fill: color, opacity: 0.18 });
+  const dot = svg("circle", { r, fill: color, filter: "url(#glow)" });
+  g.append(halo, dot);
+  let text = null;
+  if (label) { text = svg("text", { class: "packet-label", "text-anchor": "middle" }); text.textContent = label; g.append(text); }
+  packets.append(g);
+  const t0 = performance.now();
+  const ease = (k) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);
+  (function step(ts) {
+    const k = Math.min(1, (ts - t0) / dur);
+    const d = ease(k) * len;
+    const p = path.getPointAtLength(reverse ? len - d : d);
+    halo.setAttribute("cx", p.x); halo.setAttribute("cy", p.y);
+    dot.setAttribute("cx", p.x); dot.setAttribute("cy", p.y);
+    if (text) { text.setAttribute("x", p.x); text.setAttribute("y", p.y - r - 9); }
+    if (k < 1) requestAnimationFrame(step); else { g.remove(); onArrive && onArrive(); }
+  })(t0);
+}
+function particle(color) {
+  if (!S.animate) return;
+  const ts = performance.now();
+  if (ts - S.lastParticle < 45) return;
+  S.lastParticle = ts;
+  travel($("#resPath"), { color, r: 3, dur: 750 });
+}
+function heat(el, cls, ms = 900) { el.classList.add(cls); clearTimeout(el._heat); el._heat = setTimeout(() => el.classList.remove(cls), ms); }
+
+function layoutTools() {
+  const wires = $("#toolWires"), nodes = $("#toolNodes");
+  wires.innerHTML = ""; nodes.innerHTML = "";
+  const names = S.toolNames, n = names.length;
+  const x0 = 70, x1 = 390;
+  names.forEach((name, i) => {
+    const x = n === 1 ? (x0 + x1) / 2 : x0 + ((x1 - x0) * i) / (n - 1);
+    const y = 318;
+    const wire = svg("path", { class: "tool-wire", d: `M 230 180 L ${x} ${y - 24}`, id: `tw-${name}` });
+    wires.append(wire);
+    const g = svg("g", { class: "tool-node", id: `tn-${name}` });
+    g.append(svg("circle", { class: "core", cx: x, cy: y, r: 22 }));
+    const t = svg("text", { x, y: y + 42 }); t.textContent = name; g.append(t);
+    nodes.append(g);
+  });
+}
+function ensureTools(names) {
+  const merged = [...S.toolNames];
+  for (const name of names) if (!merged.includes(name)) merged.push(name);
+  if (merged.length !== S.toolNames.length || merged.some((n, i) => n !== S.toolNames[i])) { S.toolNames = merged; layoutTools(); }
+}
+
+function setModel(state) {
+  const m = $("#model");
+  m.classList.toggle("thinking", state === "thinking");
+  m.classList.toggle("streaming", state === "streaming");
+}
+function setHarness(sub, busy) { $("#harnessSub").textContent = sub; $("#harness").classList.toggle("busy", !!busy); }
+
+// ---------------------------------------------------------------- tape
+const ROLE_COLOR = { system: "var(--system)", user: "var(--user)", assistant: "var(--assistant)", tool: "var(--toolmsg)", custom: "var(--custom)" };
+function renderTape(ctx) {
+  const tape = $("#tape");
+  const known = tape.querySelectorAll(".blk").length;
+  tape.querySelectorAll(".blk").forEach((b) => b.remove());
+  const systemChars = ctx.system.length + ctx.tools.reduce((a, t) => a + t.chars, 0);
+  const blocks = [{ role: "system", chars: systemChars, preview: ctx.system, label: `system prompt + ${ctx.tools.length} tool schemas` }]
+    .concat(ctx.messages.map((m) => ({ ...m, label: m.role === "tool" ? `tool result · ${m.toolName}` : m.role === "custom" ? `custom · ${m.kind}` : m.role })));
+  blocks.forEach((b, i) => {
+    const el = document.createElement("div");
+    el.className = "blk" + (S.animate && i >= known ? " new" : "");
+    el.style.flexGrow = Math.max(1, b.chars);
+    el.style.background = ROLE_COLOR[b.role] || "var(--custom)";
+    el.title = `${b.label} · ${fmt(b.chars)} chars ≈ ${fmt(Math.ceil(b.chars / 4))} tokens`;
+    el.onclick = () => showDetail({ block: b.label, chars: b.chars, preview: b.preview });
+    tape.append(el);
+  });
+  const total = blocks.reduce((a, b) => a + b.chars, 0);
+  ctx.estTokens = Math.ceil(total / 4);
+  $("#tapeCache").style.width = "0";
+  $("#tapeStats").className = "";
+  $("#tapeStats").innerHTML = `Turn ${ctx.turn}: <b>${ctx.messages.length}</b> messages + system · ≈ <b>${fmt(ctx.estTokens)}</b> tokens go up in full, every call`;
+}
+function shadeCache(turn) {
+  if (!S.context || S.context.turn !== turn.n || !turn.usage) return;
+  const u = turn.usage, total = u.inputTokens + u.cachedInputTokens + u.cacheWriteTokens;
+  if (!total) return;
+  const pct = Math.min(100, (100 * u.cachedInputTokens) / total);
+  $("#tapeCache").style.width = pct + "%";
+  $("#tapeStats").innerHTML += pct >= 1 ? ` · cache hit on the first <b>${pct.toFixed(0)}%</b>` : " · no cache hit this turn";
+}
+
+// ---------------------------------------------------------------- turns
+function turnState(n) {
+  if (!S.turns.has(n)) S.turns.set(n, { n, tStart: null, tFirst: null, tEnd: null, chars: 0, deltas: 0, usage: null, stop: null, tools: [], card: null, section: null, text: null, calls: new Map() });
+  return S.turns.get(n);
+}
+function renderCard(turn) {
+  const wrap = $("#turns");
+  wrap.querySelector(".empty")?.remove();
+  if (!turn.card) { turn.card = document.createElement("div"); turn.card.className = "turn"; wrap.append(turn.card); turn.card.scrollIntoView({ inline: "end", block: "nearest" }); }
+  const c = turn.card; c.classList.toggle("live", !turn.tEnd);
+  const u = turn.usage || { inputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 0 };
+  const maxIn = Math.max(1, ...[...S.turns.values()].map((t) => t.usage ? t.usage.inputTokens + t.usage.cachedInputTokens + t.usage.cacheWriteTokens : 0));
+  const maxOut = Math.max(1, ...[...S.turns.values()].map((t) => t.usage ? t.usage.outputTokens : 0));
+  const w = (v, m) => (100 * v) / m + "%";
+  const ttft = turn.tFirst && turn.tStart ? turn.tFirst - turn.tStart : null;
+  const total = turn.tEnd && turn.tStart ? turn.tEnd - turn.tStart : null;
+  const streamMs = turn.tEnd && turn.tFirst ? turn.tEnd - turn.tFirst : null;
+  // A burst (a tool call arriving whole) has no meaningful rate.
+  const tps = streamMs && streamMs >= 800 && u.outputTokens ? Math.round(u.outputTokens / (streamMs / 1000)) : null;
+  c.innerHTML = `
+    <div class="turn-h">Turn ${turn.n} <span class="stop ${turn.stop || ""}">${turn.stop || "in flight"}</span></div>
+    <div class="kv">in · <b>${fmt(u.cachedInputTokens)}</b> cached · <b>${fmt(u.inputTokens)}</b> fresh${u.cacheWriteTokens ? ` · <b>${fmt(u.cacheWriteTokens)}</b> written` : ""}</div>
+    <div class="bar"><span style="width:${w(u.cachedInputTokens, maxIn)};background:var(--cache)"></span><span style="width:${w(u.inputTokens, maxIn)};background:var(--fresh)"></span><span style="width:${w(u.cacheWriteTokens, maxIn)};background:var(--write)"></span></div>
+    <div class="kv">out · <b>${fmt(u.outputTokens)}</b> tokens</div>
+    <div class="bar"><span style="width:${w(u.outputTokens, maxOut)};background:var(--stream)"></span></div>
+    <div class="kv">${ttft !== null ? `first token <b>${secs(ttft)}</b>` : "waiting for first token"}${total !== null ? ` · total <b>${secs(total)}</b>` : ""}${tps ? ` · <b>${tps}</b> tok/s` : ""}</div>
+    ${turn.tools.length ? `<div class="kv">tools · ${turn.tools.map((t) => `<b>${esc(t.name)}</b> ${t.ms}ms${t.mark}`).join(" · ")}</div>` : ""}`;
+}
+
+// ---------------------------------------------------------------- response panel
+function section(turn) {
+  if (turn.section) return turn.section;
+  const box = $("#response");
+  box.querySelector(".empty")?.remove();
+  const s = document.createElement("div"); s.className = "rsec";
+  s.innerHTML = `<h3>Turn ${turn.n}</h3>`;
+  box.append(s); turn.section = s; return s;
+}
+function textEl(turn) {
+  if (turn.text) return turn.text;
+  const el = document.createElement("div"); el.className = "rtext";
+  el.innerHTML = '<span class="body"></span><span class="cursor"></span>';
+  section(turn).append(el); turn.text = el; return el;
+}
+function callEl(turn, id, name) {
+  if (turn.calls.has(id)) return turn.calls.get(id);
+  const el = document.createElement("div"); el.className = "call";
+  el.innerHTML = `<span class="name">${esc(name)}</span><span class="args"></span><span class="res">writing…</span>`;
+  el._args = "";
+  section(turn).append(el); turn.calls.set(id, el); return el;
+}
+function stopCursors() { document.querySelectorAll(".rtext .cursor").forEach((c) => c.remove()); }
+function scrollResponse() { const r = $("#response"); r.scrollTop = r.scrollHeight; }
+
+// ---------------------------------------------------------------- event log
+const TYPE_COLOR = { agent_start: "var(--cache)", turn_start: "var(--request)", message_update: "var(--stream)", tool_execution_start: "var(--tool)", tool_execution_end: "var(--tool)", steer: "var(--user)", check: "var(--tool)", turn_end: "var(--request)", agent_end: "var(--cache)", context: "var(--system)" };
+function logRow(item, type, detail) {
+  const row = document.createElement("div");
+  row.className = "row" + (S.animate ? " flash" : "");
+  const rel = S.t0 === null ? 0 : item.t - S.t0;
+  row.innerHTML = `<span class="t">+${(rel / 1000).toFixed(2)}</span><span class="ty" style="color:${TYPE_COLOR[type] || "var(--dim)"}">${type}</span><span class="d">${esc(detail)}</span>`;
+  row._items = [item];
+  row.onclick = () => { document.querySelectorAll(".row.sel").forEach((r) => r.classList.remove("sel")); row.classList.add("sel"); showDetail(row._items.length === 1 ? row._items[0] : { merged: row._items.length, items: row._items.slice(0, 50) }); };
+  const log = $("#log"); const stick = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
+  log.append(row); if (stick) log.scrollTop = log.scrollHeight;
+  return row;
+}
+function showDetail(obj) {
+  const d = $("#detail"); d.classList.add("open");
+  const json = JSON.stringify(obj, null, 2) || "";
+  d.innerHTML = esc(json.length > 60000 ? json.slice(0, 60000) + "\n…" : json)
+    .replace(/(&quot;[^&]*?&quot;)(\s*:)/g, '<span class="k">$1</span>$2')
+    .replace(/:\s(&quot;.*?&quot;)(,?)$/gm, ': <span class="s">$1</span>$2')
+    .replace(/:\s(-?\d+(\.\d+)?)(,?)$/gm, ': <span class="n">$1</span>$3')
+    .replace(/:\s(true|false|null)(,?)$/gm, ': <span class="b">$1</span>$2');
+}
+
+// ---------------------------------------------------------------- apply
+function apply(item) {
+  S.clockOffset = Date.now() - item.t;
+  if (S.t0 === null) S.t0 = item.t;
+  if (item.kind === "context") return onContext(item);
+  if (item.kind !== "event") return;
+  const e = item.event;
+  if (e.type !== "message_update") S.lastDeltaRow = null;
+  switch (e.type) {
+    case "agent_start": return onAgentStart(item, e);
+    case "turn_start": return onTurnStart(item, e);
+    case "message_update": return onDelta(item, e);
+    case "tool_execution_start": return onToolStart(item, e);
+    case "tool_execution_end": return onToolEnd(item, e);
+    case "steer": return onSteer(item, e);
+    case "turn_end": return onTurnEnd(item, e);
+    case "check": return onCheck(item, e);
+    case "agent_end": return onAgentEnd(item, e);
+  }
+}
+
+function onAgentStart(item, e) {
+  S.meta = e; S.runActive = true; updateReplay();
+  $("#hModel").textContent = `${e.provider}/${e.model}`;
+  $("#hSession").textContent = e.sessionId;
+  $("#modelTitle").textContent = clip(e.model, 18);
+  $("#modelSub").textContent = e.provider;
+  $("#cloudLabel").textContent = e.provider;
+  setHarness("loop · starting", true);
+  logRow(item, "agent_start", `${e.provider}/${e.model}`);
+  narrate("start", `A run starts on <code>${esc(e.provider)}/${esc(e.model)}</code>. The model is stateless: every turn, mya sends the whole transcript again.`);
+}
+
+function onTurnStart(item, e) {
+  const turn = turnState(e.turn); turn.tStart = item.t; S.current = turn;
+  setHarness(`turn ${e.turn} · sending`, true);
+  setModel("idle");
+  renderCard(turn); section(turn);
+  logRow(item, "turn_start", `turn ${e.turn}`);
+  narrate("request", `Turn ${e.turn}: mya packs the system prompt, tool schemas, and every message so far into one request…`);
+  turn.sentRequest = false;
+  if (S.animate) setTimeout(() => { if (!turn.sentRequest) sendRequest(turn, null); }, 160);
+}
+
+function onContext(item) {
+  S.context = item; ensureTools(item.tools.map((t) => t.name));
+  renderTape(item);
+  logRow(item, "context", `${item.messages.length} messages · ≈${fmt(item.estTokens)} tokens`);
+  const turn = turnState(item.turn);
+  narrate("request", `Turn ${item.turn}: ${item.messages.length} message${item.messages.length === 1 ? "" : "s"} plus the system prompt, about <b>${fmt(item.estTokens)} tokens</b>, travel to <code>${esc(item.model)}</code>. Nothing else leaves your machine.`);
+  sendRequest(turn, item.estTokens);
+}
+
+function sendRequest(turn, tokens) {
+  if (turn.sentRequest) return;
+  turn.sentRequest = true;
+  const wire = $("#reqPath");
+  const r = tokens ? Math.min(16, 5 + Math.log10(Math.max(10, tokens)) * 2.6) : 8;
+  travel(wire, {
+    color: "var(--request)", r, dur: 1000, lane: true, label: tokens ? `≈${fmt(tokens)} tok` : "request",
+    onStart: () => wire.classList.add("hot"),
+    onArrive: () => {
+      wire.classList.remove("hot");
+      if (!turn.tFirst && !turn.tEnd && S.current === turn) {
+        setModel("thinking");
+        setHarness(`turn ${turn.n} · waiting`, true);
+        narrate("thinking", "The model is reading the prompt (prefill) and thinking. No tokens come back until that finishes: this pause is the time to first token.");
+      }
+    },
+  });
+}
+
+function onDelta(item, e) {
+  const turn = turnState(e.turn);
+  const d = e.delta;
+  const first = !turn.tFirst;
+  if (first) {
+    turn.tFirst = item.t;
+    renderCard(turn);
+    setModel("streaming");
+    setHarness(`turn ${turn.n} · receiving`, true);
+    if (d.kind === "text") narrate("streaming", `First token after <b>${secs(turn.tFirst - turn.tStart)}</b>. The answer now streams back a few characters at a time.`);
+  }
+  if (d.kind === "text") {
+    turn.chars += d.text.length;
+    const body = textEl(turn).querySelector(".body"); body.textContent += d.text;
+    particle("var(--stream)");
+    $("#resPath").classList.add("hot-res");
+  } else {
+    turn.chars += d.argumentsDelta.length;
+    const el = callEl(turn, d.id, d.name);
+    el._args += d.argumentsDelta; el.querySelector(".args").textContent = el._args;
+    particle("var(--call)");
+    if (!S.seenCalls.has(d.id)) {
+      S.seenCalls.add(d.id);
+      narrate("tool call", `The model is writing a call to <code>${esc(d.name)}</code>. It cannot run it; it can only ask. The arguments arrive as JSON, token by token.`);
+    }
+  }
+  turn.deltas += 1;
+  scrollResponse();
+  if (S.lastDeltaRow && S.lastDeltaRow._turn === turn.n) {
+    const row = S.lastDeltaRow; row._items.push(item); row._chars += d.kind === "text" ? d.text.length : d.argumentsDelta.length;
+    row.querySelector(".d").textContent = `${row._items.length} deltas · ${row._chars} chars streamed`;
+  } else {
+    const row = logRow(item, "message_update", d.kind === "text" ? JSON.stringify(d.text) : `${d.name} ${d.argumentsDelta}`);
+    row._turn = turn.n; row._chars = d.kind === "text" ? d.text.length : d.argumentsDelta.length; S.lastDeltaRow = row;
+  }
+}
+
+function onToolStart(item, e) {
+  const turn = turnState(e.turn);
+  // Tools only run once the model's reply is complete.
+  if (!turn.tStreamEnd) turn.tStreamEnd = item.t;
+  ensureTools([e.call.name]);
+  setModel("idle"); $("#resPath").classList.remove("hot-res");
+  setHarness(`turn ${turn.n} · running ${e.call.name}`, true);
+  const el = callEl(turn, e.call.id, e.call.name);
+  el.querySelector(".args").textContent = JSON.stringify(e.call.arguments ?? e.call.rawArguments);
+  el.querySelector(".res").textContent = "running…";
+  const wire = $(`#tw-${CSS.escape(e.call.name)}`), node = $(`#tn-${CSS.escape(e.call.name)}`);
+  if (wire) {
+    travel(wire, {
+      color: "var(--tool)", r: 6, dur: 600, lane: true, label: e.call.name,
+      onStart: () => { wire.classList.add("hot"); node && node.classList.add("active"); },
+    });
+  }
+  logRow(item, "tool_execution_start", `${e.call.name} ${JSON.stringify(e.call.arguments ?? {})}`);
+  narrate("tool", `mya runs <code>${esc(e.call.name)}</code> here, on your machine. The model never gets a file handle, a socket, or a process: only the text that comes back.`);
+}
+
+function onToolEnd(item, e) {
+  const turn = turnState(e.turn);
+  const o = e.outcome;
+  const steered = typeof o.output === "string" && o.output.startsWith("not run: a steering message");
+  const mark = o.refusedBy ? " ⛔" : steered ? " ↩" : o.isError ? " ✗" : " ✓";
+  turn.tools.push({ name: e.call.name, ms: e.durationMs, mark });
+  const el = callEl(turn, e.call.id, e.call.name);
+  el.classList.add(steered ? "steered" : o.refusedBy ? "refused" : o.isError ? "bad" : "ok");
+  el.querySelector(".res").textContent = `${mark.trim()} ${e.durationMs}ms · ${bytes(o.output.length)}`;
+  const wire = $(`#tw-${CSS.escape(e.call.name)}`), node = $(`#tn-${CSS.escape(e.call.name)}`);
+  const color = steered ? "var(--user)" : o.refusedBy ? "var(--refused)" : o.isError ? "var(--error)" : "var(--tool)";
+  const settle = () => {
+    if (!node) return;
+    node.classList.remove("active");
+    if (steered) node.classList.add("steered");
+    else if (o.refusedBy) heat(node, "refused", 1500);
+    else if (o.isError) heat(node, "fail", 1500);
+  };
+  if (wire) travel(wire, { color, r: 6, dur: 600, lane: true, reverse: true, label: bytes(o.output.length), onArrive: () => { wire.classList.remove("hot"); settle(); } });
+  else settle();
+  renderCard(turn);
+  logRow(item, "tool_execution_end", `${e.call.name}${mark} ${e.durationMs}ms · ${o.output.length} chars`);
+  if (steered) narrate("steer", `<code>${esc(e.call.name)}</code> does not run. A steer arrived while an earlier tool in this batch was still going.`);
+  else if (o.refusedBy) narrate("refused", `The <code>${esc(o.refusedBy)}</code> extension refused <code>${esc(e.call.name)}</code>. Its refusal text becomes the tool result, so the model can see why.`);
+  else narrate("tool", `<code>${esc(e.call.name)}</code> ${o.isError ? "failed" : "finished"} in ${e.durationMs}ms and returned ${bytes(o.output.length)} of text. That text is appended to the transcript as its own message.`);
+}
+
+function onSteer(item, e) {
+  const turn = turnState(e.turn);
+  for (const skipped of e.skipped || []) {
+    const el = turn.calls.get(skipped.id);
+    if (!el) continue;
+    el.classList.remove("bad", "ok", "refused");
+    el.classList.add("steered");
+    const res = el.querySelector(".res");
+    if (res) res.textContent = "skipped · steer";
+  }
+  if (S.context) {
+    const messages = S.context.messages.concat([{ role: "user", chars: e.text.length, preview: e.text }]);
+    renderTape({ ...S.context, messages });
+    $("#tape").querySelector(".blk:last-child")?.classList.add("steer");
+    const before = S.context.messages.length;
+    $("#tapeStats").innerHTML = `Steer inserts a user message. The next call reads <b>${before + 1}</b> messages, not ${before}.`;
+  }
+  setHarness(`turn ${e.turn} · steered`, true);
+  const names = (e.skipped || []).map((call) => call.name);
+  logRow(item, "steer", `${JSON.stringify(e.text)}${names.length ? ` · skipped ${names.join(", ")}` : ""}`);
+  const skippedLine = names.length ? ` <code>${esc(names.join(", "))}</code> ${names.length === 1 ? "does" : "do"} not run.` : "";
+  narrate("steer", `Steer: <b>${esc(e.text)}</b>.${skippedLine} The text is inserted after the tool that just finished, and the next request carries it.`);
+}
+
+function onCheck(item, e) {
+  const mark = e.passed ? "pass" : "fail";
+  const score = e.score === undefined ? "" : ` · score ${e.score}`;
+  logRow(item, "check", `${mark} · ${e.command}${score}`);
+  narrate("check", `<code>check</code> ${mark}${score}. Exit code 0 is pass. The loop records the score and does not decide what it means.`);
+}
+
+function onTurnEnd(item, e) {
+  const turn = turnState(e.turn);
+  turn.tEnd = item.t; turn.usage = e.usage; turn.stop = e.stopReason;
+  setModel("idle"); $("#resPath").classList.remove("hot-res");
+  if (turn.text) turn.text.querySelector(".cursor")?.remove();
+  renderCard(turn); shadeCache(turn);
+  logRow(item, "turn_end", `${e.stopReason} · in ${e.usage.inputTokens} + ${e.usage.cachedInputTokens} cached · out ${e.usage.outputTokens}`);
+  const u = e.usage;
+  const cacheLine = u.cachedInputTokens ? `<b>${fmt(u.cachedInputTokens)}</b> tokens were a cache hit, so only <b>${fmt(u.inputTokens)}</b> needed fresh prefill.` : `Nothing was cached this time: <b>${fmt(u.inputTokens)}</b> tokens of fresh prefill.`;
+  if (e.toolCalls > 0) {
+    setHarness(`turn ${turn.n} · looping`, true);
+    narrate("loop", `Turn ${turn.n} asked for ${e.toolCalls} tool call${e.toolCalls === 1 ? "" : "s"}. ${cacheLine} Tool results mean the loop goes around again.`);
+  } else {
+    setHarness(`turn ${turn.n} · answered`, true);
+    narrate("done", `The model answered in text and nothing is queued, so the loop stops. ${cacheLine}`);
+  }
+}
+
+function onAgentEnd(item, e) {
+  S.runActive = false; updateReplay(); stopCursors();
+  setModel("idle"); setHarness(`idle · ${e.turns} turn${e.turns === 1 ? "" : "s"}`, false);
+  logRow(item, "agent_end", `${e.reason} · ${e.turns} turns`);
+  const u = e.usage;
+  if (e.reason === "error") narrate("error", `The run failed: ${esc(e.error || "unknown error")}`);
+  else narrate("done", `Run finished (${esc(e.reason)}): ${e.turns} turn${e.turns === 1 ? "" : "s"} · ${fmt(u.inputTokens + u.cachedInputTokens)} tokens in (${fmt(u.cachedInputTokens)} from cache) · ${fmt(u.outputTokens)} out.`);
+}
+
+// ---------------------------------------------------------------- live timer
+(function tick() {
+  const turn = S.current, el = $("#modelTimer");
+  if (turn && turn.tStart && !turn.tEnd) {
+    if (!turn.tFirst) el.textContent = `thinking ${secs(now() - turn.tStart)}`;
+    else if (turn.tStreamEnd) el.textContent = `reply done in ${secs(turn.tStreamEnd - turn.tStart)} · tools running on your machine`;
+    else { const s = (now() - turn.tFirst) / 1000; el.textContent = `streaming · ${s > 0.2 ? Math.round(turn.chars / 4 / s) : "…"} tok/s`; }
+  } else if (turn && turn.tEnd && turn.tFirst) el.textContent = `first token ${secs(turn.tFirst - turn.tStart)} · ${secs(turn.tEnd - turn.tStart)} total`;
+  else el.textContent = "";
+  requestAnimationFrame(tick);
+})();
+
+// ---------------------------------------------------------------- reset, replay, connection
+function reset() {
+  S.turns = new Map(); S.current = null; S.t0 = null; S.context = null; S.seenCalls = new Set(); S.lastDeltaRow = null;
+  laneFreeAt = 0; narration.queue = []; clearTimeout(narration.timer); narration.timer = null; narration.busyUntil = 0;
+  packets.innerHTML = "";
+  S.toolNames = ["read", "write", "edit", "bash"]; layoutTools();
+  $("#turns").innerHTML = '<span class="empty">No turns yet.</span>';
+  $("#response").innerHTML = '<span class="empty">Streamed text and tool calls appear here.</span>';
+  $("#log").innerHTML = ""; $("#detail").classList.remove("open");
+  $("#tape").querySelectorAll(".blk").forEach((b) => b.remove()); $("#tapeCache").style.width = "0";
+  $("#tapeStats").className = "empty"; $("#tapeStats").textContent = "No request yet.";
+  setModel("idle"); setHarness("loop · idle", false);
+}
+function updateReplay() { $("#replay").disabled = S.runActive || S.replaying || !S.store.some((i) => i.kind === "event"); }
+
+$("#replay").onclick = () => {
+  if (S.runActive || S.replaying) return;
+  const items = S.store.slice();
+  if (!items.length) return;
+  S.replaying = true; updateReplay(); reset(); S.animate = true;
+  const speed = Number($("#speed").value) || 1;
+  // Replay is for learning: long waits shrink, and each step gets time to be seen.
+  const MIN_AFTER = { context: 1100, tool_execution_start: 700, tool_execution_end: 750, steer: 1600, turn_end: 900, agent_start: 600, turn_start: 250 };
+  let i = 0;
+  const next = () => {
+    if (i >= items.length) { S.replaying = false; updateReplay(); return; }
+    const item = items[i++];
+    apply(item);
+    if (i < items.length) {
+      const kind = item.kind === "context" ? "context" : item.event?.type;
+      const real = Math.min(1500, Math.max(0, items[i].t - item.t));
+      setTimeout(next, Math.max(real, MIN_AFTER[kind] ?? 0) / speed);
+    } else { S.replaying = false; updateReplay(); }
+  };
+  narrate("replay", "Replaying the run with its original timing.");
+  setTimeout(next, 400);
+};
+
+function connect() {
+  const source = new EventSource("/events");
+  let loading = false;
+  source.onopen = () => { $("#conn").className = "dot live"; $("#connText").textContent = "live"; };
+  source.onmessage = (msg) => {
+    const item = JSON.parse(msg.data);
+    if (item.kind === "hello") {
+      if (S.pid !== null && S.pid !== item.pid) { S.store = []; reset(); }
+      S.pid = item.pid; return;
+    }
+    if (item.kind === "history-start") { loading = true; S.store = []; reset(); S.animate = false; return; }
+    if (item.kind === "history-end") {
+      loading = false; S.animate = true; updateReplay();
+      if (S.store.length && !S.runActive) narrate("done", "Loaded the last run. Press <b>Replay run</b> to watch it again, or send another prompt in the terminal.");
+      return;
+    }
+    S.store.push(item);
+    if (S.replaying) return;
+    S.animate = !loading;
+    apply(item);
+    updateReplay();
+  };
+  source.onerror = () => { $("#conn").className = "dot"; $("#connText").textContent = "mya not running"; };
+}
+
+layoutTools();
+connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/pi-ai" },
+    { "path": "packages/pi-agent" },
+    { "path": "packages/pi-compaction" },
+    { "path": "packages/pi-search" },
+    { "path": "packages/pi-jev" },
+    { "path": "packages/pi-viz" },
+    { "path": "packages/pi" }
+  ]
+}

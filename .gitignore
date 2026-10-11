@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.sessions/
+.mya/
+.pi/
+.env
+experiments/*/data/

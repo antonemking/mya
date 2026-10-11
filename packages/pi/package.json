@@ -1,0 +1,22 @@
+{
+  "name": "pi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "mya": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "dependencies": {
+    "pi-agent": "0.1.0",
+    "pi-ai": "0.1.0",
+    "pi-viz": "0.1.0"
+  },
+  "files": [
+    "dist"
+  ]
+}
