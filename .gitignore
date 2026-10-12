@@ -6,3 +6,5 @@ dist/
 .pi/
 .env
 experiments/*/data/
+
+docs/
